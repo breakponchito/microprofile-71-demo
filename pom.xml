@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>fish.payara.demo</groupId>
+    <artifactId>microprofile-71-demo</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>war</packaging>
+    <name>MicroProfile 7.1 Demo — Bookstore API</name>
+    <description>
+        Demonstrates MicroProfile 7.1 across all specs:
+          Config 3.1      — @ConfigProperties, Supplier, ConfigValue
+          REST Client 4.0 — @ClientHeaderParam compute, configKey, RestClientBuilder enhancements
+          Fault Tolerance 4.1 — @Retry, @CircuitBreaker, @Timeout, @Bulkhead, @Fallback + OTel metrics
+          Health 4.0      — @Liveness, @Readiness, @Startup
+          OpenAPI 4.1     — OAS 3.1 output format, @APIResponseSchema, JSON Schema 2020-12
+          JWT 2.1         — @Claim, JsonWebToken, @RolesAllowed
+          Telemetry 2.1   — @WithSpan, @SpanAttribute, injectable Tracer and Meter, OTel metrics
+
+        Note: MicroProfile Metrics (5.1 in MP 6.1) was removed in MP 7.0.
+        Custom metrics now use the OTel Meter API via Telemetry 2.1.
+
+        Contrasts with MicroProfile 6.1 patterns throughout.
+        Target runtime: Payara Server 7.x / Payara Micro 7.x
+    </description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <failOnMissingWebXml>false</failOnMissingWebXml>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- MicroProfile 7.1 umbrella BOM — all spec APIs at provided scope -->
+            <dependency>
+                <groupId>org.eclipse.microprofile</groupId>
+                <artifactId>microprofile</artifactId>
+                <version>7.1</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- All MicroProfile 7.1 spec APIs — provided by Payara at runtime -->
+        <dependency>
+            <groupId>org.eclipse.microprofile</groupId>
+            <artifactId>microprofile</artifactId>
+            <version>7.1</version>
+            <type>pom</type>
+            <scope>provided</scope>
+        </dependency>
+
+        <!--
+          OpenTelemetry Instrumentation Annotations (@WithSpan, @SpanAttribute).
+          Part of MicroProfile Telemetry 2.0 — server provides the implementation;
+          we only need the compile-time annotations here.
+        -->
+        <dependency>
+            <groupId>io.opentelemetry.instrumentation</groupId>
+            <artifactId>opentelemetry-instrumentation-annotations</artifactId>
+            <version>2.5.0</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!--
+          OpenTelemetry API — injectable Tracer, Meter, OpenTelemetry beans.
+          Also provided by the server via MP Telemetry 2.0.
+        -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+            <version>1.40.0</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!--
+          Swagger UI 5.x WebJar — supports OAS 3.1 output from MicroProfile OpenAPI 4.1.
+          Servlet 3.0+ containers (Payara) auto-serve META-INF/resources/ from JARs, so
+          the UI files are reachable at /webjars/swagger-ui/5.25.3/ with no extra servlet.
+        -->
+        <dependency>
+            <groupId>org.webjars</groupId>
+            <artifactId>swagger-ui</artifactId>
+            <version>5.25.3</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-war-plugin</artifactId>
+                <version>3.4.0</version>
+                <configuration>
+                    <failOnMissingWebXml>false</failOnMissingWebXml>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

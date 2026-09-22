@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  [MP 7.1 / CDI 4.1 Lite] bean-discovery-mode="annotated" is compatible with
+  CDI 4.1 Lite, which is the CDI profile required by MicroProfile 7.x.
+  CDI Lite removes the requirement for a full CDI container, enabling smaller
+  runtimes.  annotated mode scans only classes explicitly annotated with a
+  bean-defining annotation (@ApplicationScoped, @RequestScoped, etc.).
+
+  [CONTRAST — MP 6.1 / CDI 4.0] CDI 4.0 also supported Lite; MP 6.1 required
+  CDI 4.0. The practical difference is that MP 7.x specs (REST Client, Fault
+  Tolerance, etc.) are now tested against CDI Lite rather than full CDI.
+-->
+<beans xmlns="https://jakarta.ee/xml/ns/jakartaee"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="https://jakarta.ee/xml/ns/jakartaee
+           https://jakarta.ee/xml/ns/jakartaee/beans_4_0.xsd"
+       bean-discovery-mode="annotated"
+       version="4.0">
+</beans>
