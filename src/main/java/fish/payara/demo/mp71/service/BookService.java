@@ -5,6 +5,10 @@ import fish.payara.demo.mp71.client.IsbnLookupResult;
 import fish.payara.demo.mp71.config.BookstoreConfig;
 import fish.payara.demo.mp71.config.FeatureFlags;
 import fish.payara.demo.mp71.model.Book;
+import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.logs.Severity;
 import io.opentelemetry.api.metrics.DoubleHistogram;
 import io.opentelemetry.api.metrics.LongCounter;
 import io.opentelemetry.api.metrics.Meter;
@@ -80,6 +84,15 @@ public class BookService {
     @Inject
     private Meter meter;
 
+    /*
+     * [MP 7.1 / Telemetry 2.1] OpenTelemetry is injectable — used here to obtain
+     * the LogsBridge, which emits structured log records exported via OTLP to Loki.
+     * Payara does not auto-bridge JUL to OTel, so we use the LogsBridge API directly.
+     */
+    @Inject
+    private OpenTelemetry openTelemetry;
+
+    private io.opentelemetry.api.logs.Logger otelLogger;
     private LongCounter    booksAddedCounter;
     private DoubleHistogram listDurationHistogram;
 
@@ -89,6 +102,10 @@ public class BookService {
      */
     @PostConstruct
     private void initMetrics() {
+        otelLogger = openTelemetry.getLogsBridge()
+            .loggerBuilder("bookstore-api")
+            .build();
+
         booksAddedCounter = meter.counterBuilder("bookstore.books.added")
             .setDescription("Total books added to the catalog")
             .setUnit("{book}")
@@ -193,6 +210,15 @@ public class BookService {
     public Book addBook(Book book) {
         catalog.put(book.getIsbn(), book);
         booksAddedCounter.add(1);
+        otelLogger.logRecordBuilder()
+            .setSeverity(Severity.INFO)
+            .setBody("Book added to catalog")
+            .setAllAttributes(Attributes.of(
+                AttributeKey.stringKey("book.isbn"),   book.getIsbn(),
+                AttributeKey.stringKey("book.title"),  book.getTitle(),
+                AttributeKey.stringKey("book.author"), book.getAuthor()
+            ))
+            .emit();
         return book;
     }
 
