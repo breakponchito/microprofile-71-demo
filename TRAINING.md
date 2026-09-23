@@ -680,27 +680,106 @@ curl -s $APP/api/books/config/diagnostics \
 
 ---
 
-#### Step 9 — Telemetry: injectable Meter (REST Client 4.0 + Telemetry 2.1)
+#### Step 9 — Telemetry: metrics, logs, and traces to an OTLP backend
 
-**Spec:** Telemetry 2.1 — `@WithSpan`, `@SpanAttribute`, injectable `Meter`.
+**Spec:** Telemetry 2.1 — `@WithSpan`, `@SpanAttribute`, injectable `Meter`, OTel Logs Bridge API.
 
-Add a few more books and list them to generate counter and histogram data:
+##### 9a. Start the observability stack
+
+`grafana/otel-lgtm` is a single container that accepts all three OTel signals and routes them to the right backend:
+
+| Signal | Backend inside lgtm | View in Grafana |
+|---|---|---|
+| Traces | Grafana Tempo | Explore → Tempo |
+| Metrics | Prometheus | Explore → Prometheus |
+| Logs | Loki | Explore → Loki |
 
 ```bash
-# Add Books 3 and 4
+podman run -d \
+  --name lgtm \
+  --restart always \
+  -p 3000:3000 \
+  -p 4317:4317 \
+  -p 4318:4318 \
+  grafana/otel-lgtm:latest
+```
+
+Open Grafana at `http://localhost:3000` (no login required locally).
+
+##### 9b. Start Payara Micro with all three exporters
+
+> **Key point:** `otel.*` properties in `microprofile-config.properties` are read too late for the
+> OTel SDK initialisation. Pass them as JVM system properties (`-D`) so the SDK picks them up at boot.
+
+```bash
+java \
+  -Dotel.service.name=bookstore-api \
+  -Dotel.sdk.disabled=false \
+  -Dotel.traces.exporter=otlp \
+  -Dotel.metrics.exporter=otlp \
+  -Dotel.logs.exporter=otlp \
+  -Dotel.exporter.otlp.protocol=http/protobuf \
+  -Dotel.exporter.otlp.endpoint=http://localhost:4318 \
+  -Dotel.metric.export.interval=10000 \
+  -Dotel.traces.sampler=parentbased_traceidratio \
+  -Dotel.traces.sampler.arg=1.0 \
+  -jar /path/to/payara-micro.jar \
+  --deploy target/microprofile-71-demo-1.0-SNAPSHOT.war
+```
+
+##### 9c. Generate traffic and verify each signal
+
+```bash
+# Generate list calls (bookstore.list.duration histogram + BookService.findAll span)
+for i in {1..10}; do curl -s $APP/api/books > /dev/null; done
+
+# Add a book — emits bookstore.books.added counter AND a structured OTel log record
 curl -s -X POST $APP/api/books \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d '{"isbn":"978-0-20-163361-0","title":"The Pragmatic Programmer","author":"David Thomas","publicationYear":2019,"price":49.95,"category":"PROGRAMMING"}'
-
-# List books three times to generate bookstore.list.duration histogram entries
-for i in 1 2 3; do curl -s $APP/api/books > /dev/null; done
 ```
 
-**If you have an OTel backend at localhost:4317**, open Grafana/Jaeger and check:
-- `bookstore.books.added` — counter increments for each POST
-- `bookstore.list.duration` — histogram of catalog list duration (seconds)
-- `http.server.request.duration` — platform metric, emitted automatically by Payara, no app code needed
+**Traces** — Grafana → Explore → datasource `Tempo` → search service `bookstore-api`:
+- `BookService.findAll`, `BookService.addBook`, `BookService.findByIsbn` spans
+- Each span carries `book.isbn` attribute from `@SpanAttribute`
+
+**Metrics** — Grafana → Explore → datasource `Prometheus`:
+```promql
+# Books added (LongCounter)
+bookstore_books_added_total
+
+# List latency 95th percentile (DoubleHistogram)
+histogram_quantile(0.95, rate(bookstore_list_duration_seconds_bucket[1m]))
+
+# Fault Tolerance auto-metrics (emitted by FT 4.1, no app code needed)
+ft_retry_calls_total
+ft_timeout_execution_duration_seconds_bucket
+ft_circuitbreaker_state_total
+
+# Platform metric from Payara (no app code needed)
+http_server_request_duration_seconds_count
+```
+
+**Logs** — Grafana → Explore → datasource `Loki`:
+```logql
+{service_name="bookstore-api"}
+```
+
+Each `POST /api/books` call emits a structured log record via the OTel Logs Bridge API
+(`openTelemetry.getLogsBridge()` in `BookService.addBook`) with attributes:
+- `book.isbn`, `book.title`, `book.author`
+- `trace_id` and `span_id` — automatically injected because `addBook` runs inside a `@WithSpan` span
+
+Click the `trace_id` value in any Loki log entry → Grafana jumps to the matching Tempo trace.
+This log-to-trace correlation is the core value of the OTel Logs Bridge API.
+
+> **Why LogsBridge and not JUL?**
+> Payara Micro does not automatically bridge `java.util.logging` into the OTel SDK.
+> `otel.logs.exporter=otlp` tells the SDK *how* to export, but application code must
+> submit records explicitly via `OpenTelemetry.getLogsBridge()`. This is by design in
+> MicroProfile Telemetry 2.x — the runtime provides the bridge API; the application
+> chooses what structured data to emit.
 
 **What to explain — Telemetry 2.1 breaking change:**
 HTTP span attributes were renamed. If you have saved Jaeger queries or Grafana dashboards
