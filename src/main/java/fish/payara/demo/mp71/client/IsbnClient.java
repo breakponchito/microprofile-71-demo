@@ -67,4 +67,25 @@ public interface IsbnClient {
     static String requestSource() {
         return "payara-bookstore/1.0";
     }
+
+    /*
+     * [REST Client 4.0] EntityPart — portable multipart type (Jakarta EE 10).
+     *
+     * Shown here as a commented example of the interface pattern.
+     * The actual cover upload endpoint is on BookResource (POST /api/books/{isbn}/cover)
+     * to keep this client focused on the external ISBN service.
+     *
+     * [CONTRAST — MP 6.1 / REST Client 3.0] Multipart required vendor-specific types:
+     *   @POST @Path("/{isbn}/cover") @Consumes(MULTIPART_FORM_DATA)
+     *   Response upload(@PathParam("isbn") String isbn,
+     *                   MultipartInput input);       // RESTEasy-specific
+     *   // or
+     *   Response upload(@PathParam("isbn") String isbn,
+     *                   FormDataBodyPart part);      // Jersey-specific
+     *
+     * [NEW — REST Client 4.0 / Jakarta EE 10]
+     *   @POST @Path("/{isbn}/cover") @Consumes(MULTIPART_FORM_DATA)
+     *   Response uploadCoverImage(@PathParam("isbn") String isbn,
+     *                             List<EntityPart> parts);   // portable
+     */
 }

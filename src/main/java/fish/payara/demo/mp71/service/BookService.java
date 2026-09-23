@@ -5,6 +5,7 @@ import fish.payara.demo.mp71.client.IsbnLookupResult;
 import fish.payara.demo.mp71.config.BookstoreConfig;
 import fish.payara.demo.mp71.config.FeatureFlags;
 import fish.payara.demo.mp71.model.Book;
+import fish.payara.demo.mp71.model.BookEvent;
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
@@ -56,6 +57,9 @@ public class BookService {
     @Inject
     @RestClient
     private IsbnClient isbnClient;
+
+    @Inject
+    private BookWebhookNotifier webhookNotifier;
 
     @Inject
     @ConfigProperties
@@ -219,12 +223,17 @@ public class BookService {
                 AttributeKey.stringKey("book.author"), book.getAuthor()
             ))
             .emit();
+        webhookNotifier.notifyAsync(BookEvent.added(book));
         return book;
     }
 
     @WithSpan("BookService.deleteBook")
     public boolean deleteBook(@SpanAttribute("book.isbn") String isbn) {
-        return catalog.remove(isbn) != null;
+        boolean removed = catalog.remove(isbn) != null;
+        if (removed) {
+            webhookNotifier.notifyAsync(BookEvent.deleted(isbn));
+        }
+        return removed;
     }
 
     // ── Health helpers ─────────────────────────────────────────────────────

@@ -3,11 +3,14 @@ package fish.payara.demo.mp71.resource;
 import fish.payara.demo.mp71.config.BookstoreConfig;
 import fish.payara.demo.mp71.config.FeatureFlags;
 import fish.payara.demo.mp71.model.Book;
+import fish.payara.demo.mp71.model.WebhookRegistration;
 import fish.payara.demo.mp71.service.BookService;
+import fish.payara.demo.mp71.service.BookWebhookNotifier;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.EntityPart;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.config.Config;
@@ -27,6 +30,7 @@ import org.eclipse.microprofile.openapi.annotations.security.SecurityRequirement
 import org.eclipse.microprofile.openapi.annotations.security.SecurityScheme;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 
@@ -35,9 +39,11 @@ import java.util.Optional;
  *
  * <h3>Specs demonstrated</h3>
  * <ul>
- *   <li>OpenAPI 4.1 — {@literal @}APIResponseSchema, {@literal @}SecurityScheme on class</li>
+ *   <li>OpenAPI 4.1 — {@literal @}APIResponseSchema, {@literal @}SecurityScheme on class,
+ *       {@literal @}Webhooks on Application (see BookstoreApplication)</li>
  *   <li>JWT 2.1 — {@literal @}Claim injection, JsonWebToken, {@literal @}RolesAllowed</li>
  *   <li>Config 3.1 — ConfigValue for audit/diagnostics</li>
+ *   <li>REST Client 4.0 — EntityPart for multipart (cover upload)</li>
  * </ul>
  */
 @RequestScoped
@@ -61,6 +67,7 @@ import java.util.Optional;
 public class BookResource {
 
     @Inject private BookService bookService;
+    @Inject private BookWebhookNotifier webhookNotifier;
     @Inject @ConfigProperties private BookstoreConfig storeConfig;
     @Inject private FeatureFlags featureFlags;
     @Inject private Config mpConfig;
@@ -174,7 +181,7 @@ public class BookResource {
     @RolesAllowed({"admin", "librarian"})
     @Operation(
         summary = "Add a book to the catalog",
-        description = "Requires JWT with role 'admin' or 'librarian'"
+        description = "Requires JWT with role 'admin' or 'librarian'. Triggers the 'book-added' webhook."
     )
     @SecurityRequirement(name = "jwt")
     @APIResponse(responseCode = "201", description = "Book added")
@@ -197,7 +204,8 @@ public class BookResource {
     @DELETE
     @Path("/{isbn}")
     @RolesAllowed("admin")
-    @Operation(summary = "Remove a book from the catalog")
+    @Operation(summary = "Remove a book from the catalog",
+               description = "Triggers the 'book-deleted' webhook on success.")
     @SecurityRequirement(name = "jwt")
     @APIResponse(responseCode = "204", description = "Deleted")
     @APIResponse(responseCode = "404", description = "Not found")
@@ -205,6 +213,94 @@ public class BookResource {
         boolean removed = bookService.deleteBook(isbn);
         return removed ? Response.noContent().build()
                        : Response.status(Response.Status.NOT_FOUND).build();
+    }
+
+    // ── POST /api/books/webhooks ───────────────────────────────────────────
+
+    /*
+     * [MP 7.1 / OpenAPI 4.1] This endpoint lets clients register a callback URL.
+     * The webhook contract (payload shape, expected response codes) is documented
+     * in the @Webhooks declaration on BookstoreApplication — a new OAS 3.1 feature
+     * absent from OAS 3.0 (used by MP OpenAPI 3.x in MP 6.1).
+     */
+    @POST
+    @Path("/webhooks")
+    @Operation(
+        summary = "Register a webhook callback URL",
+        description = "The server will POST BookEvent payloads to this URL when books are added or deleted. " +
+                      "See the 'webhooks' section of the OpenAPI document for the callback contract."
+    )
+    @APIResponse(responseCode = "201", description = "Callback URL registered")
+    @APIResponse(responseCode = "400", description = "Missing or blank callbackUrl")
+    public Response registerWebhook(WebhookRegistration registration) {
+        if (registration == null || registration.getCallbackUrl() == null
+                || registration.getCallbackUrl().isBlank()) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                           .entity("{\"error\":\"callbackUrl is required\"}")
+                           .build();
+        }
+        webhookNotifier.register(registration.getCallbackUrl());
+        return Response.status(Response.Status.CREATED)
+                       .entity("{\"registered\":\"" + registration.getCallbackUrl() + "\"}")
+                       .build();
+    }
+
+    // ── POST /api/books/{isbn}/cover ───────────────────────────────────────
+
+    /*
+     * [MP 7.1 / REST Client 4.0] EntityPart is Jakarta EE 10's standard multipart type.
+     * It replaces vendor-specific implementations (RESTEasy MultipartInput, Jersey
+     * FormDataBodyPart, etc.) that were required in MP 6.1 / Jakarta EE 9.1.
+     *
+     * [CONTRAST — MP 6.1]
+     *   // RESTEasy-specific — not portable:
+     *   public Response upload(MultipartInput input) { ... }
+     *
+     * [NEW — Jakarta EE 10 / MP 7.x]
+     *   public Response upload(List<EntityPart> parts) { ... }
+     */
+    @POST
+    @Path("/{isbn}/cover")
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    @Operation(
+        summary = "Upload a cover image for a book",
+        description = "Accepts a multipart/form-data request with a 'cover' file part. " +
+                      "Demonstrates REST Client 4.0 EntityPart — the portable Jakarta EE 10 " +
+                      "replacement for vendor-specific multipart types."
+    )
+    @APIResponse(responseCode = "200", description = "Cover received — returns filename and size")
+    @APIResponse(responseCode = "400", description = "Missing 'cover' part in the request")
+    @APIResponse(responseCode = "404", description = "Book not found")
+    public Response uploadCover(@PathParam("isbn") String isbn, List<EntityPart> parts) {
+        if (bookService.findByIsbn(isbn).isEmpty()) {
+            return Response.status(Response.Status.NOT_FOUND)
+                           .entity("{\"error\":\"Book not found: " + isbn + "\"}")
+                           .build();
+        }
+
+        Optional<EntityPart> coverPart = parts.stream()
+                .filter(p -> "cover".equals(p.getName()))
+                .findFirst();
+
+        if (coverPart.isEmpty()) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                           .entity("{\"error\":\"Missing multipart field: cover\"}")
+                           .build();
+        }
+
+        EntityPart part = coverPart.get();
+        String filename = part.getFileName().orElse("unknown");
+        long sizeBytes;
+        try {
+            sizeBytes = part.getContent().readAllBytes().length;
+        } catch (IOException e) {
+            sizeBytes = -1;
+        }
+
+        String json = String.format(
+            "{\"isbn\":\"%s\",\"filename\":\"%s\",\"sizeBytes\":%d}",
+            isbn, filename, sizeBytes);
+        return Response.ok(json).build();
     }
 
     // ── GET /api/books/config/diagnostics ─────────────────────────────────
@@ -256,6 +352,9 @@ public class BookResource {
         sb.append(String.format("  subject: %s%n", subject));
         sb.append(String.format("  username: %s%n", preferredUsername));
         sb.append(String.format("  groups: %s%n", jwt.getGroups()));
+
+        sb.append("\n=== Webhooks ===\n");
+        sb.append(String.format("  registered callbacks: %d%n", webhookNotifier.registeredCount()));
 
         return Response.ok(sb.toString()).build();
     }

@@ -17,6 +17,15 @@ import org.eclipse.microprofile.openapi.annotations.servers.Server;
  * [MP 7.1 / OpenAPI 4.1] @OpenAPIDefinition at the Application level sets global
  * API metadata.  OpenAPI 4.1 produces OAS 3.1 format output (JSON Schema 2020-12
  * dialect) from the /openapi endpoint.
+ *
+ * [MP 7.1 / OpenAPI 4.1] Webhooks are declared programmatically via OASFilter
+ * (see BookstoreOASFilter).  MicroProfile OpenAPI 4.x exposes the OAS 3.1 'webhooks'
+ * map through OpenAPI.addWebhook(name, PathItem) — there is no annotation shorthand;
+ * the filter runs after annotation scanning so it can augment the model.
+ *
+ * [CONTRAST — MP 6.1 / OpenAPI 3.1] OAS 3.0 (produced by MP OpenAPI 3.x) had no
+ * 'webhooks' field; outbound callbacks required x-webhooks extensions or were left
+ * undocumented entirely.
  */
 @ApplicationScoped
 @LoginConfig(authMethod = "MP-JWT", realmName = "bookstore")

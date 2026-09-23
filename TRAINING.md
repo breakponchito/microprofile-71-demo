@@ -789,7 +789,144 @@ against a Telemetry 2.x runtime. Rename them to `http.request.method`, `url.full
 
 ---
 
-#### Step 10 — Hands-on Exercise
+#### Step 10 — OpenAPI 4.1 Webhooks (OAS 3.1 'webhooks' section)
+
+**Spec:** OpenAPI 4.1 — OAS 3.1 `webhooks` top-level field, programmatic `OASFilter` API.
+
+**What changed from MP 6.1:**
+OAS 3.0 (produced by MP OpenAPI 3.x in MP 6.1) had no `webhooks` keyword.
+Outbound callbacks were undocumented or required `x-webhooks` vendor extensions.
+OAS 3.1 (produced by MP OpenAPI 4.x in MP 7.x) adds a first-class `webhooks` map.
+MP OpenAPI 4.x exposes it via `OpenAPI.addWebhook(name, PathItem)` in an `OASFilter`.
+
+**Demo files:**
+- `openapi/BookstoreOASFilter.java` — registers the two webhooks programmatically
+- `service/BookWebhookNotifier.java` — holds callback URLs, fires events using REST Client 4.0 `RestClientBuilder.baseUri(String)`
+- `microprofile-config.properties` — `mp.openapi.filter=...BookstoreOASFilter`
+
+**10a. See the webhooks section in the generated spec**
+
+```bash
+curl -s "http://localhost:8080/openapi?format=JSON" | python3 -m json.tool | grep -A 40 '"webhooks"'
+```
+
+Expected output:
+```json
+"webhooks": {
+  "book-added": {
+    "post": {
+      "summary": "Book added to catalog",
+      "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookEvent" } } } },
+      "responses": { "200": { "description": "Webhook acknowledged" }, "410": { "description": "Subscriber gone..." } }
+    }
+  },
+  "book-deleted": { ... }
+}
+```
+
+Open Swagger UI at `http://localhost:8080/microprofile-71-demo-1.0-SNAPSHOT/swagger-ui/` —
+Swagger UI 5.x renders the `webhooks` section as a separate tab below `paths`.
+
+**10b. Register a callback and trigger the webhook**
+
+Start a simple echo listener (in a separate terminal):
+```bash
+# Python one-liner echo server — prints any POST body it receives
+python3 -c "
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers['Content-Length']))
+        print('WEBHOOK:', body.decode())
+        self.send_response(200); self.end_headers()
+HTTPServer(('', 9999), H).serve_forever()
+"
+```
+
+Register the callback URL:
+```bash
+curl -s -X POST $APP/api/books/webhooks \
+  -H "Content-Type: application/json" \
+  -d '{"callbackUrl":"http://localhost:9999"}'
+```
+
+Expected: `201 Created` with `{"registered":"http://localhost:9999"}`
+
+Trigger the `book-added` webhook by adding a book:
+```bash
+curl -s -X POST $APP/api/books \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"isbn":"978-0-20-163361-0","title":"The Pragmatic Programmer","author":"David Thomas","publicationYear":2019,"price":49.95,"category":"PROGRAMMING"}'
+```
+
+The echo server prints the delivered payload:
+```json
+WEBHOOK: {"type":"ADDED","book":{"isbn":"978-0-20-163361-0","title":"The Pragmatic Programmer",...},"occurredAt":"2026-09-22T..."}
+```
+
+**What to explain — REST Client 4.0 inside the notifier:**
+`BookWebhookNotifier` builds the outgoing HTTP client with:
+```java
+// [NEW — REST Client 4.0] baseUri(String) — no URI.create() needed
+RestClientBuilder.newBuilder().baseUri(url).build(WebhookCallbackClient.class)
+
+// [OLD — REST Client 3.0 in MP 6.1]
+RestClientBuilder.newBuilder().baseUri(URI.create(url)).build(WebhookCallbackClient.class)
+```
+
+---
+
+#### Step 11 — REST Client 4.0: EntityPart multipart upload
+
+**Spec:** REST Client 4.0 / Jakarta EE 10 — `EntityPart` as the portable multipart type.
+
+**What changed from MP 6.1:**
+Jakarta EE 9.1 (used by MP 6.1) had no standard multipart type. Each JAX-RS
+implementation shipped its own: `MultipartInput` (RESTEasy), `FormDataBodyPart` (Jersey).
+Jakarta EE 10 (used by MP 7.x) adds `jakarta.ws.rs.core.EntityPart` — one portable type
+that works on any compliant runtime.
+
+**Demo file:** `resource/BookResource.java` — `POST /api/books/{isbn}/cover`
+
+**11a. Upload a cover image**
+
+First add a book if the catalog is empty:
+```bash
+curl -s -X POST $APP/api/books \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"isbn":"978-0-13-468599-1","title":"Effective Java","author":"Joshua Bloch","publicationYear":2018,"price":45.99,"category":"PROGRAMMING"}'
+```
+
+Upload a cover (any file works for the demo):
+```bash
+echo "fake-image-data" > /tmp/cover.jpg
+
+curl -s -X POST "$APP/api/books/978-0-13-468599-1/cover" \
+  -F "cover=@/tmp/cover.jpg;type=image/jpeg"
+```
+
+Expected response:
+```json
+{"isbn":"978-0-13-468599-1","filename":"cover.jpg","sizeBytes":16}
+```
+
+**11b. Show the contrast in IsbnClient.java**
+
+Point to `client/IsbnClient.java` — the commented block at the bottom shows the
+old vendor-specific pattern versus the new portable `List<EntityPart>` parameter.
+
+**What to explain:**
+- `@Consumes(MULTIPART_FORM_DATA)` with `List<EntityPart>` compiles and runs on any
+  Jakarta EE 10 runtime — no runtime-specific dependency needed
+- Each part is accessed by name: `parts.stream().filter(p -> "cover".equals(p.getName()))`
+- `EntityPart.getFileName()` returns `Optional<String>` — the multipart `filename` attribute
+- `EntityPart.getContent()` returns `InputStream` — read with `readAllBytes()` or stream
+
+---
+
+#### Step 12 — Hands-on Exercise
 
 **Task:** Add a live "discount" feature using the specs that changed in MP 7.x.
 
